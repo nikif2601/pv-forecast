@@ -74,7 +74,6 @@ def compute_pv_output(weather, lat, lon, tz, tilt, azimuth, module_name, inverte
 
     # Effective irradiance and cell temp
     effective_irradiance = poa['poa_global']
-    # (Integrate temps into advanced models if needed)
 
     # Single diode model
     sd = pvlib.pvsystem.singlediode(
@@ -101,25 +100,39 @@ def compute_pv_output(weather, lat, lon, tz, tilt, azimuth, module_name, inverte
 # --- Streamlit App ---
 st.set_page_config(page_title="Next-Day PV Forecast", layout="centered")
 st.title("🌞 Next-Day PV Production Forecast")
+st.markdown("Enter your PV system parameters below, then click **Run Forecast**. Timezone is fixed to CET.")
 
-st.markdown("Enter your PV system parameters below, then click **Run Forecast**.")
+# Precompute module/inverter lists and defaults
+tz_fixed = "CET"
+modules = list(_modules.keys())
+inverters = list(_inverters.keys())
+try:
+    default_module = modules.index('Canadian_Solar_CS5P_220M___2009_')
+except ValueError:
+    default_module = 0
+try:
+    default_inverter = inverters.index('ABB__MICRO_0_25_I_OUTD_US_208__208V_')
+except ValueError:
+    default_inverter = 0
 
 # Input panel
 tab1, tab2 = st.tabs(["Settings", "Results"])
 with tab1:
+    st.subheader("System Location & Orientation")
     col1, col2 = st.columns(2)
     with col1:
         lat = st.number_input("Latitude", value=51.5074, format="%.6f")
-        lon = st.number_input("Longitude", value=-0.1278, format="%.6f")
-        tz = st.text_input("Timezone (e.g. Europe/London)", value="Europe/London")
+        lon = st.number_input("Longitude", value=13.4050, format="%.6f")  # Default CET region coords
     with col2:
         tilt = st.slider("Tilt (°)", 0.0, 90.0, 30.0)
         azimuth = st.slider("Azimuth (°)", 0.0, 360.0, 180.0)
 
-    modules = list(_modules.keys())
-    inverters = list(_inverters.keys())
-    module_name = st.selectbox("PV Module", modules, index=modules.index('Canadian_Solar_CS5P_220M___2009_'))
-    inverter_name = st.selectbox("Inverter", inverters, index=inverters.index('ABB__MICRO_0_25_I_OUTD_US_208__208V_'))
+    st.subheader("PV Components")
+    col3, col4 = st.columns(2)
+    with col3:
+        module_name = st.selectbox("PV Module", modules, index=default_module)
+    with col4:
+        inverter_name = st.selectbox("Inverter", inverters, index=default_inverter)
 
     run = st.button("Run Forecast")
 
@@ -128,9 +141,9 @@ with tab2:
         st.info("Run a forecast in the Settings tab first.")
     else:
         with st.spinner("Computing..."):
-            weather = fetch_forecast(lat, lon, tz)
+            weather = fetch_forecast(lat, lon, tz_fixed)
             ac, hourly_kwh, daily_kwh = compute_pv_output(
-                weather, lat, lon, tz, tilt, azimuth, module_name, inverter_name
+                weather, lat, lon, tz_fixed, tilt, azimuth, module_name, inverter_name
             )
         st.subheader("Hourly AC Power (W)")
         st.line_chart(ac)
@@ -142,12 +155,11 @@ with tab2:
         st.write(daily_kwh)
 
         total = daily_kwh.sum() if not daily_kwh.empty else 0.0
-        st.success(f"Estimated total production for tomorrow: {total:.2f} kWh")
+        st.success(f"Estimated total production for tomorrow (CET): {total:.2f} kWh")
 
         csv = hourly_kwh.to_frame().to_csv()
         st.download_button("Download Hourly kWh CSV", data=csv, file_name="hourly_kWh_forecast.csv")
 
 # Footer
 st.markdown("---")
-st.markdown("Built with PVLib and Streamlit.")
-
+st.markdown("Built with PVLib and Streamlit. Timezone fixed to Central European Time (CET). Selected module and inverter above.")
