@@ -71,6 +71,7 @@ def compute_pv_output(weather, lat, lon, tilt, azimuth, module_key, inverter_key
         ac = mc.results.ac.rename('ac_power')
     except Exception:
         ac = mc.ac.rename('ac_power')
+    # scale and convert to kW
     ac_total_kw = ac * num_panels * num_inverters / 1000
     hourly_kwh = ac_total_kw
     daily_kwh = hourly_kwh.resample('D').sum()
@@ -81,12 +82,13 @@ st.set_page_config(page_title="Next-Day PV Forecast", layout="centered")
 st.title("🌞 Next-Day PV Production Forecast")
 st.markdown("All times in CET. Enter details and click **Run Forecast**.")
 
-# Prepare brand/type lists
+# Prepare brand/type lists with friendly labels
 module_keys = list(_modules.keys())
 mod_brands = sorted({k.split('_')[0] for k in module_keys})
 inv_keys = list(_inverters.keys())
 inv_brands = sorted({k.split('_')[0] for k in inv_keys})
 
+# Build brand & type selectors
 tab1, tab2 = st.tabs(["Settings", "Results"])
 with tab1:
     st.subheader("Location & Orientation")
@@ -97,40 +99,38 @@ with tab1:
 
     st.subheader("PV Module Selection")
     m_brand = st.selectbox("Module Brand", mod_brands)
-        module_options = [k for k in module_keys if k.startswith(m_brand + '_')]
-    # annotate module types with year, power
+    module_options = [k for k in module_keys if k.startswith(m_brand + '_')]
+    # Create labels: short name, year, STC power
     module_labels = []
-    module_label_to_key = {}
-    for k in module_options:
-        # extract year from key suffix
-        try:
-            year = k.split('___')[-1].strip('_')
-        except Exception:
-            year = 'N/A'
-        params = _modules[k]
-        # compute STC power
-        p_stc = params.get('Impo', 0) * params.get('Vmpo', 0)
-        label = f"{k} ({year}, {p_stc/1000:.2f} kW)"
+    label_to_module = {}
+    for key in module_options:
+        parts = key.split('___')
+        name = parts[0]
+        year = parts[1] if len(parts) > 1 else 'N/A'
+        params = _modules[key]
+        p_stc_w = params.get('Impo', 0) * params.get('Vmpo', 0)
+        label = f"{name} ({year}, {int(p_stc_w)} W)"
         module_labels.append(label)
-        module_label_to_key[label] = k
+        label_to_module[label] = key
     selected_module_label = st.selectbox("Module Type", module_labels)
-    module_key = module_label_to_key[selected_module_label]("Module Type", module_options)
+    module_key = label_to_module[selected_module_label]
 
     st.subheader("Inverter Selection")
     i_brand = st.selectbox("Inverter Brand", inv_brands)
-        inverter_options = [k for k in inv_keys if k.startswith(i_brand + '_')]
-    # annotate inverter types with rated power and voltage
+    inverter_options = [k for k in inv_keys if k.startswith(i_brand + '_')]
     inverter_labels = []
-    inverter_label_to_key = {}
-    for k in inverter_options:
-        params = _inverters[k]
-        paco = params.get('Paco', params.get('Pac0', 0))
+    label_to_inverter = {}
+    for key in inverter_options:
+        parts = key.split('_')
+        name = parts[0]
+        params = _inverters[key]
+        paco_kw = params.get('Paco', params.get('Pac0', 0)) / 1000
         vac = params.get('Vac', 'N/A')
-        label = f"{k} ({paco/1000:.2f} kW, {vac} V)"
+        label = f"{name} ({paco_kw:.2f} kW, {vac} V)"
         inverter_labels.append(label)
-        inverter_label_to_key[label] = k
+        label_to_inverter[label] = key
     selected_inverter_label = st.selectbox("Inverter Type", inverter_labels)
-    inverter_key = inverter_label_to_key[selected_inverter_label]("Inverter Type", inverter_options)
+    inverter_key = label_to_inverter[selected_inverter_label]
 
     st.subheader("Plant Size")
     num_panels = st.number_input("# of Panels", min_value=1, value=1, step=1)
