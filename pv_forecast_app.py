@@ -7,51 +7,57 @@ import requests
 @st.cache_data(show_spinner=False)
 def fetch_forecast(lat, lon, tz):
     """
-    Fetches next-day hourly weather forecast from Open-Meteo.
-    Requests global, direct, and diffuse radiation, plus temperature and wind speed.
-    Converts to local timezone.
-    Returns DataFrame with columns: ghi, dhi, dni, temperature_2m, wind_speed_10m.
+    Fetches next-day hourly weather forecast using NASA POWER API as fallback for Open-Meteo.
+    Returns DataFrame indexed in CET timezone with columns: ghi, dhi, dni, temperature_2m, wind_speed_10m.
     """
-    url = "https://api.open-meteo.com/v1/forecast"
+    # Compute tomorrow date for API
+    local_tz = tz
+    tomorrow_date = (pd.Timestamp.now(local_tz) + pd.Timedelta(days=1)).strftime('%Y%m%d')
+
+    # NASA POWER API parameters
+    url = 'https://power.larc.nasa.gov/api/temporal/hourly/point'
     params = {
-        'latitude': lat,
+        'parameters': 'ALLSKY_SFC_SW_DWN,ALLSKY_SFC_DL_SW_DWN,ALLSKY_SFC_DIFF_SW_DWN,T2M,WS10M',
+        'community': 'RE',
         'longitude': lon,
-        'hourly': 'global_radiation,direct_radiation,diffuse_radiation,temperature_2m,wind_speed_10m',
-        'timezone': 'UTC'  # fetch in UTC
+        'latitude': lat,
+        'start': tomorrow_date,
+        'end': tomorrow_date,
+        'format': 'JSON'
     }
     try:
-        r = requests.get(url, params=params, timeout=10)
+        r = requests.get(url, params=params, timeout=20)
         r.raise_for_status()
-    except requests.RequestException as e:
-        st.error(f"Failed to fetch weather data: {e}")
+        data = r.json()
+    except Exception as e:
+        st.error(f"NASA POWER API error: {e}")
         return pd.DataFrame()
 
-    data = r.json().get('hourly', {})
-    if not data or 'time' not in data:
-        st.error("No hourly data returned by weather API.")
-        return pd.DataFrame()
-
-    df = pd.DataFrame(data)
-    df['time'] = pd.to_datetime(df['time'])
-    df = df.set_index('time').tz_localize('UTC').tz_convert(tz)
-
-    # Rename radiation columns to match PVLib expectations
-    df = df.rename(
-        columns={
-            'global_radiation': 'ghi',
-            'direct_radiation': 'dni',
-            'diffuse_radiation': 'dhi'
-        }
-    )
-
-    # Filter to tomorrow's date
-    local_now = pd.Timestamp.now(tz)
-    tomorrow_str = (local_now + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+    # Extract hourly data
     try:
-        df = df.loc[tomorrow_str]
+        params_data = data['properties']['parameter']
+        ghi_series = pd.Series(params_data['ALLSKY_SFC_SW_DWN'])
+        dni_series = pd.Series(params_data['ALLSKY_SFC_DL_SW_DWN'])
+        dhi_series = pd.Series(params_data['ALLSKY_SFC_DIFF_SW_DWN'])
+        temp_series = pd.Series(params_data['T2M'])
+        wind_series = pd.Series(params_data['WS10M'])
     except KeyError:
-        st.error(f"No data available for {tomorrow_str} in timezone {tz}.")
+        st.error("Unexpected NASA POWER response format.")
         return pd.DataFrame()
+
+    # Build DataFrame
+    df = pd.DataFrame({
+        'ghi': ghi_series,
+        'dni': dni_series,
+        'dhi': dhi_series,
+        'temperature_2m': temp_series,
+        'wind_speed_10m': wind_series
+    })
+    # Index is hour strings like '2025061100', parse to datetime UTC
+    df.index = pd.to_datetime(df.index, format='%Y%m%d%H', utc=True)
+    # Convert to local timezone
+    df = df.tz_convert(local_tz)
+
     return df
 
 # --- Load PVLib Tables ---
@@ -168,4 +174,5 @@ with tab2:
 
 st.markdown("---")
 st.markdown("Built with PVLib and Streamlit. Timezone fixed to CET (Europe/Berlin). Selected module and inverter above.")
+
 
