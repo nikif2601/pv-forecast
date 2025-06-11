@@ -8,11 +8,6 @@ from pvlib.modelchain import ModelChain
 # --- Helper Functions ---
 @st.cache_data(show_spinner=False)
 def fetch_forecast(lat, lon, tz):
-    """
-    Fetches next-day hourly weather forecast from Open-Meteo Forecast API.
-    Variables: shortwave_radiation (GHI), direct_normal_irradiance (DNI), diffuse_radiation (DHI), temperature_2m, wind_speed_10m.
-    Returns DataFrame localized to tz with columns: ghi, dni, dhi, temperature_2m, wind_speed_10m.
-    """
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         'latitude': lat,
@@ -26,22 +21,18 @@ def fetch_forecast(lat, lon, tz):
     except requests.RequestException as e:
         st.error(f"Failed to fetch weather data: {e}")
         return pd.DataFrame()
-
     data = r.json().get('hourly', {})
     if not data or 'time' not in data:
         st.error("No hourly data returned by weather API.")
         return pd.DataFrame()
-
     df = pd.DataFrame(data)
     df['time'] = pd.to_datetime(df['time'], utc=True)
     df = df.set_index('time').tz_convert(tz)
-
     df = df.rename(columns={
         'shortwave_radiation': 'ghi',
         'direct_normal_irradiance': 'dni',
         'diffuse_radiation': 'dhi'
     })
-
     tomorrow = (pd.Timestamp.now(tz) + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
     try:
         df = df.loc[tomorrow]
@@ -60,18 +51,10 @@ def get_pv_tables():
 _modules, _inverters = get_pv_tables()
 
 @st.cache_data(show_spinner=False)
-def compute_pv_output(weather, lat, lon, tilt, azimuth, module_name, inverter_name):
-    """
-    Uses PVLib ModelChain to compute AC power and energy from weather & system parameters.
-    Returns ac (hourly AC W), hourly_kwh, daily_kwh.
-    """
+def compute_pv_output(weather, lat, lon, tilt, azimuth, module_name, inverter_name, num_panels, num_inverters):
     if weather.empty:
         return pd.Series(dtype=float), pd.Series(dtype=float), pd.Series(dtype=float)
-
-    # Prepare weather for ModelChain
     mc_weather = weather.rename(columns={'temperature_2m': 'temp_air', 'wind_speed_10m': 'wind_speed'})
-
-    # Location & System
     location = Location(lat, lon, tz)
     system = pvlib.pvsystem.PVSystem(
         surface_tilt=tilt,
@@ -80,28 +63,26 @@ def compute_pv_output(weather, lat, lon, tilt, azimuth, module_name, inverter_na
         inverter_parameters=_inverters[inverter_name],
         temperature_model_parameters=pvlib.temperature.TEMPERATURE_MODEL_PARAMETERS['sapm']['open_rack_glass_glass']
     )
-
-    # ModelChain with no AOI loss model to avoid inference errors
     mc = ModelChain(system, location, aoi_model='no_loss')
     mc.run_model(mc_weather)
-
-        # Extract AC power series
     try:
         ac = mc.results.ac.rename('ac_power')
     except Exception:
-        ac = mc.ac.rename('ac_power')  # fallback for older versions
-
-    # Convert to energy
-    hourly_kwh = ac / 1000  # W -> kW * 1h  # W -> kW * 1h
+        ac = mc.ac.rename('ac_power')
+        # scale to plant
+    ac_total_w = ac * num_panels * num_inverters  # total AC power in W
+    # convert to kW
+    ac_total_kw = ac_total_w / 1000  # kW
+    # hourly energy remains kWh (since kW * 1h)
+    hourly_kwh = ac_total_kw  # power in kW for each hour equals kWh over that hour
     daily_kwh = hourly_kwh.resample('D').sum()
-    return ac, hourly_kwh, daily_kwh
+    return ac_total_kw, hourly_kwh, daily_kwh
+    return ac_total, hourly_kwh, daily_kwh
 
 # --- Streamlit App Config ---
 tz = "Europe/Berlin"
 modules = list(_modules.keys())
 inverters = list(_inverters.keys())
-
-# Defaults for dropdowns
 try:
     default_module = modules.index('Canadian_Solar_CS5P_220M___2009_')
 except ValueError:
@@ -113,10 +94,9 @@ except ValueError:
 
 st.set_page_config(page_title="Next-Day PV Forecast", layout="centered")
 st.title("🌞 Next-Day PV Production Forecast")
-st.markdown("All times in Central European Time (CET). Enter system details and click **Run Forecast**.")
+st.markdown("All times in CET. Enter details and click **Run Forecast**.")
 
 tab1, tab2 = st.tabs(["Settings", "Results"])
-
 with tab1:
     st.subheader("Location & Orientation")
     lat = st.number_input("Latitude", min_value=-90.0, max_value=90.0, value=51.507400, format="%.6f")
@@ -124,39 +104,43 @@ with tab1:
     tilt = st.slider("Tilt (°)", 0.0, 90.0, 30.0)
     azimuth = st.slider("Azimuth (°)", 0.0, 360.0, 180.0)
 
-    st.subheader("PV Components")
-    module_name = st.selectbox("Module", modules, index=default_module)
-    inverter_name = st.selectbox("Inverter", inverters, index=default_inverter)
+    st.subheader("PV Components & Scale")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        module_name = st.selectbox("Module", modules, index=default_module)
+    with col2:
+        inverter_name = st.selectbox("Inverter", inverters, index=default_inverter)
+    with col3:
+        num_panels = st.number_input("# of Panels", min_value=1, value=1, step=1)
+        num_inverters = st.number_input("# of Inverters", min_value=1, value=1, step=1)
 
     run = st.button("Run Forecast")
 
 with tab2:
     if not run:
-        st.info("Run a forecast in the Settings tab first.")
+        st.info("Run a forecast in Settings.")
     else:
-        with st.spinner("Fetching weather and computing forecast..."):
+        with st.spinner("Computing plant forecast..."):
             weather = fetch_forecast(lat, lon, tz)
             ac, hourly_kwh, daily_kwh = compute_pv_output(
-                weather, lat, lon, tilt, azimuth, module_name, inverter_name
-            )
-
-        st.subheader("Hourly AC Power (W)")
+                weather, lat, lon, tilt, azimuth,
+                module_name, inverter_name,
+                num_panels, num_inverters
+            )  # ac is in kW now
+        st.subheader("Hourly AC Power for Plant (kW)")
         st.line_chart(ac)
-
-        st.subheader("Hourly Energy (kWh)")
+        st.subheader("Hourly Energy for Plant (kWh)")
         st.line_chart(hourly_kwh)
-
         st.subheader("Daily Energy (kWh)")
         st.write(daily_kwh)
-
         total = daily_kwh.sum() if not daily_kwh.empty else 0.0
         st.success(f"Total tomorrow (CET): {total:.2f} kWh")
-
         csv = hourly_kwh.to_frame().to_csv()
-        st.download_button("Download CSV", data=csv, file_name="hourly_kWh_forecast.csv")
+        st.download_button("Download Plant Hourly kWh CSV", data=csv, file_name="plant_hourly_kWh_forecast.csv")
 
 st.markdown("---")
-st.markdown("Built with PVLib and Streamlit. Timezone fixed to CET (Europe/Berlin). Selected module and inverter above.")
+st.markdown("Built with PVLib & Streamlit. Scaled by panels & inverters.")
+
 
 
 
