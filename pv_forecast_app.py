@@ -50,8 +50,10 @@ def get_pv_tables():
 
 _modules, _inverters = get_pv_tables()
 
+tz = "Europe/Berlin"
+
 @st.cache_data(show_spinner=False)
-def compute_pv_output(weather, lat, lon, tilt, azimuth, module_name, inverter_name, num_panels, num_inverters):
+def compute_pv_output(weather, lat, lon, tilt, azimuth, module_key, inverter_key, num_panels, num_inverters):
     if weather.empty:
         return pd.Series(dtype=float), pd.Series(dtype=float), pd.Series(dtype=float)
     mc_weather = weather.rename(columns={'temperature_2m': 'temp_air', 'wind_speed_10m': 'wind_speed'})
@@ -59,8 +61,8 @@ def compute_pv_output(weather, lat, lon, tilt, azimuth, module_name, inverter_na
     system = pvlib.pvsystem.PVSystem(
         surface_tilt=tilt,
         surface_azimuth=azimuth,
-        module_parameters=_modules[module_name],
-        inverter_parameters=_inverters[inverter_name],
+        module_parameters=_modules[module_key],
+        inverter_parameters=_inverters[inverter_key],
         temperature_model_parameters=pvlib.temperature.TEMPERATURE_MODEL_PARAMETERS['sapm']['open_rack_glass_glass']
     )
     mc = ModelChain(system, location, aoi_model='no_loss')
@@ -69,50 +71,43 @@ def compute_pv_output(weather, lat, lon, tilt, azimuth, module_name, inverter_na
         ac = mc.results.ac.rename('ac_power')
     except Exception:
         ac = mc.ac.rename('ac_power')
-        # scale to plant
-    ac_total_w = ac * num_panels * num_inverters  # total AC power in W
-    # convert to kW
-    ac_total_kw = ac_total_w / 1000  # kW
-    # hourly energy remains kWh (since kW * 1h)
-    hourly_kwh = ac_total_kw  # power in kW for each hour equals kWh over that hour
+    ac_total_kw = ac * num_panels * num_inverters / 1000
+    hourly_kwh = ac_total_kw
     daily_kwh = hourly_kwh.resample('D').sum()
     return ac_total_kw, hourly_kwh, daily_kwh
-    return ac_total, hourly_kwh, daily_kwh
 
-# --- Streamlit App Config ---
-tz = "Europe/Berlin"
-modules = list(_modules.keys())
-inverters = list(_inverters.keys())
-try:
-    default_module = modules.index('Canadian_Solar_CS5P_220M___2009_')
-except ValueError:
-    default_module = 0
-try:
-    default_inverter = inverters.index('ABB__MICRO_0_25_I_OUTD_US_208__208V_')
-except ValueError:
-    default_inverter = 0
-
+# --- Streamlit App ---
 st.set_page_config(page_title="Next-Day PV Forecast", layout="centered")
 st.title("🌞 Next-Day PV Production Forecast")
 st.markdown("All times in CET. Enter details and click **Run Forecast**.")
 
+# Prepare brand/type lists
+module_keys = list(_modules.keys())
+mod_brands = sorted({k.split('_')[0] for k in module_keys})
+inv_keys = list(_inverters.keys())
+inv_brands = sorted({k.split('_')[0] for k in inv_keys})
+
 tab1, tab2 = st.tabs(["Settings", "Results"])
 with tab1:
     st.subheader("Location & Orientation")
-    lat = st.number_input("Latitude", min_value=-90.0, max_value=90.0, value=51.507400, format="%.6f")
-    lon = st.number_input("Longitude", min_value=-180.0, max_value=180.0, value=13.405000, format="%.6f")
+    lat = st.number_input("Latitude", min_value=-90.0, max_value=90.0, value=51.5074, format="%.6f")
+    lon = st.number_input("Longitude", min_value=-180.0, max_value=180.0, value=13.4050, format="%.6f")
     tilt = st.slider("Tilt (°)", 0.0, 90.0, 30.0)
     azimuth = st.slider("Azimuth (°)", 0.0, 360.0, 180.0)
 
-    st.subheader("PV Components & Scale")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        module_name = st.selectbox("Module", modules, index=default_module)
-    with col2:
-        inverter_name = st.selectbox("Inverter", inverters, index=default_inverter)
-    with col3:
-        num_panels = st.number_input("# of Panels", min_value=1, value=1, step=1)
-        num_inverters = st.number_input("# of Inverters", min_value=1, value=1, step=1)
+    st.subheader("PV Module Selection")
+    m_brand = st.selectbox("Module Brand", mod_brands)
+    module_options = [k for k in module_keys if k.startswith(m_brand + '_')]
+    module_key = st.selectbox("Module Type", module_options)
+
+    st.subheader("Inverter Selection")
+    i_brand = st.selectbox("Inverter Brand", inv_brands)
+    inverter_options = [k for k in inv_keys if k.startswith(i_brand + '_')]
+    inverter_key = st.selectbox("Inverter Type", inverter_options)
+
+    st.subheader("Plant Size")
+    num_panels = st.number_input("# of Panels", min_value=1, value=1, step=1)
+    num_inverters = st.number_input("# of Inverters", min_value=1, value=1, step=1)
 
     run = st.button("Run Forecast")
 
@@ -124,9 +119,9 @@ with tab2:
             weather = fetch_forecast(lat, lon, tz)
             ac, hourly_kwh, daily_kwh = compute_pv_output(
                 weather, lat, lon, tilt, azimuth,
-                module_name, inverter_name,
+                module_key, inverter_key,
                 num_panels, num_inverters
-            )  # ac is in kW now
+            )
         st.subheader("Hourly AC Power for Plant (kW)")
         st.line_chart(ac)
         st.subheader("Hourly Energy for Plant (kWh)")
@@ -140,6 +135,7 @@ with tab2:
 
 st.markdown("---")
 st.markdown("Built with PVLib & Streamlit. Scaled by panels & inverters.")
+
 
 
 
