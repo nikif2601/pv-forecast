@@ -97,13 +97,40 @@ with tab1:
 
     st.subheader("PV Module Selection")
     m_brand = st.selectbox("Module Brand", mod_brands)
-    module_options = [k for k in module_keys if k.startswith(m_brand + '_')]
-    module_key = st.selectbox("Module Type", module_options)
+        module_options = [k for k in module_keys if k.startswith(m_brand + '_')]
+    # annotate module types with year, power
+    module_labels = []
+    module_label_to_key = {}
+    for k in module_options:
+        # extract year from key suffix
+        try:
+            year = k.split('___')[-1].strip('_')
+        except Exception:
+            year = 'N/A'
+        params = _modules[k]
+        # compute STC power
+        p_stc = params.get('Impo', 0) * params.get('Vmpo', 0)
+        label = f"{k} ({year}, {p_stc/1000:.2f} kW)"
+        module_labels.append(label)
+        module_label_to_key[label] = k
+    selected_module_label = st.selectbox("Module Type", module_labels)
+    module_key = module_label_to_key[selected_module_label]("Module Type", module_options)
 
     st.subheader("Inverter Selection")
     i_brand = st.selectbox("Inverter Brand", inv_brands)
-    inverter_options = [k for k in inv_keys if k.startswith(i_brand + '_')]
-    inverter_key = st.selectbox("Inverter Type", inverter_options)
+        inverter_options = [k for k in inv_keys if k.startswith(i_brand + '_')]
+    # annotate inverter types with rated power and voltage
+    inverter_labels = []
+    inverter_label_to_key = {}
+    for k in inverter_options:
+        params = _inverters[k]
+        paco = params.get('Paco', params.get('Pac0', 0))
+        vac = params.get('Vac', 'N/A')
+        label = f"{k} ({paco/1000:.2f} kW, {vac} V)"
+        inverter_labels.append(label)
+        inverter_label_to_key[label] = k
+    selected_inverter_label = st.selectbox("Inverter Type", inverter_labels)
+    inverter_key = inverter_label_to_key[selected_inverter_label]("Inverter Type", inverter_options)
 
     st.subheader("Plant Size")
     num_panels = st.number_input("# of Panels", min_value=1, value=1, step=1)
