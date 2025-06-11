@@ -8,6 +8,7 @@ import requests
 def fetch_forecast(lat, lon, tz):
     """
     Fetches next-day hourly weather forecast (GHI, DHI, DNI, temperature, wind) from Open-Meteo.
+    Expects an IANA timezone string (e.g., Europe/Berlin).
     Returns a pandas DataFrame indexed by datetime.
     """
     url = (
@@ -28,7 +29,7 @@ def fetch_forecast(lat, lon, tz):
     df['time'] = pd.to_datetime(df['time'])
     df = df.set_index('time')
 
-    # Only keep tomorrow's data
+    # Only keep tomorrow's data in specified timezone
     tomorrow = pd.Timestamp.now(tz=tz) + pd.Timedelta(days=1)
     date_str = tomorrow.strftime('%Y-%m-%d')
     df = df.loc[date_str]
@@ -72,7 +73,7 @@ def compute_pv_output(weather, lat, lon, tz, tilt, azimuth, module_name, inverte
         temperature_model_parameters=pvlib.temperature.TEMPERATURE_MODEL_PARAMETERS['sapm']['open_rack_glass_glass']
     )
 
-    # Effective irradiance and cell temp
+    # Effective irradiance
     effective_irradiance = poa['poa_global']
 
     # Single diode model
@@ -98,12 +99,18 @@ def compute_pv_output(weather, lat, lon, tz, tilt, azimuth, module_name, inverte
     return ac, hourly_kwh, daily_kwh
 
 # --- Streamlit App ---
+# Fixed IANA timezone for CET region
+tz_fixed = "Europe/Berlin"
+
 st.set_page_config(page_title="Next-Day PV Forecast", layout="centered")
 st.title("🌞 Next-Day PV Production Forecast")
-st.markdown("Enter your PV system parameters below, then click **Run Forecast**. Timezone is fixed to CET.")
+st.markdown(
+    "Enter your PV system parameters below, then click **Run Forecast**. "
+    "All times are in Central European Time (CET, Europe/Berlin)."
+)
 
 # Precompute module/inverter lists and defaults
-tz_fixed = "CET"
+tz = tz_fixed
 modules = list(_modules.keys())
 inverters = list(_inverters.keys())
 try:
@@ -122,7 +129,7 @@ with tab1:
     col1, col2 = st.columns(2)
     with col1:
         lat = st.number_input("Latitude", value=51.5074, format="%.6f")
-        lon = st.number_input("Longitude", value=13.4050, format="%.6f")  # Default CET region coords
+        lon = st.number_input("Longitude", value=13.4050, format="%.6f")
     with col2:
         tilt = st.slider("Tilt (°)", 0.0, 90.0, 30.0)
         azimuth = st.slider("Azimuth (°)", 0.0, 360.0, 180.0)
@@ -141,9 +148,9 @@ with tab2:
         st.info("Run a forecast in the Settings tab first.")
     else:
         with st.spinner("Computing..."):
-            weather = fetch_forecast(lat, lon, tz_fixed)
+            weather = fetch_forecast(lat, lon, tz)
             ac, hourly_kwh, daily_kwh = compute_pv_output(
-                weather, lat, lon, tz_fixed, tilt, azimuth, module_name, inverter_name
+                weather, lat, lon, tz, tilt, azimuth, module_name, inverter_name
             )
         st.subheader("Hourly AC Power (W)")
         st.line_chart(ac)
@@ -162,4 +169,5 @@ with tab2:
 
 # Footer
 st.markdown("---")
-st.markdown("Built with PVLib and Streamlit. Timezone fixed to Central European Time (CET). Selected module and inverter above.")
+st.markdown("Built with PVLib and Streamlit. Timezone fixed to Central European Time (CET, IANA: Europe/Berlin). Selected module and inverter above.")
+
