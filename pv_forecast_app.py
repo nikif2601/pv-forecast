@@ -7,16 +7,17 @@ import requests
 @st.cache_data(show_spinner=False)
 def fetch_forecast(lat, lon, tz):
     """
-    Fetches next-day hourly weather forecast from Open-Meteo (default UTC).
-    Converts timestamps to the specified tz (IANA, e.g., Europe/Berlin).
-    Returns local-time DataFrame with columns: ghi, dhi, dni, temperature_2m, wind_speed_10m.
+    Fetches next-day hourly weather forecast from Open-Meteo.
+    Requests global, direct, and diffuse radiation, plus temperature and wind speed.
+    Converts to local timezone.
+    Returns DataFrame with columns: ghi, dhi, dni, temperature_2m, wind_speed_10m.
     """
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         'latitude': lat,
         'longitude': lon,
-        'hourly': 'ghi,dhi,dni,temperature_2m,wind_speed_10m'
-        # omit timezone param to use default UTC
+        'hourly': 'global_radiation,direct_radiation,diffuse_radiation,temperature_2m,wind_speed_10m',
+        'timezone': 'UTC'  # fetch in UTC
     }
     try:
         r = requests.get(url, params=params, timeout=10)
@@ -25,17 +26,25 @@ def fetch_forecast(lat, lon, tz):
         st.error(f"Failed to fetch weather data: {e}")
         return pd.DataFrame()
 
-    payload = r.json().get('hourly', {})
-    if not payload:
+    data = r.json().get('hourly', {})
+    if not data or 'time' not in data:
         st.error("No hourly data returned by weather API.")
         return pd.DataFrame()
 
-    df = pd.DataFrame(payload)
+    df = pd.DataFrame(data)
     df['time'] = pd.to_datetime(df['time'])
-    # localize to UTC then convert to target timezone
     df = df.set_index('time').tz_localize('UTC').tz_convert(tz)
 
-    # Filter to tomorrow's local date
+    # Rename radiation columns to match PVLib expectations
+    df = df.rename(
+        columns={
+            'global_radiation': 'ghi',
+            'direct_radiation': 'dni',
+            'diffuse_radiation': 'dhi'
+        }
+    )
+
+    # Filter to tomorrow's date
     local_now = pd.Timestamp.now(tz)
     tomorrow_str = (local_now + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
     try:
@@ -89,7 +98,11 @@ def compute_pv_output(weather, lat, lon, tilt, azimuth, module_name, inverter_na
         resistance_shunt=system.module_parameters['R_sh'],
         nNsVth=system.module_parameters['nNsVth']
     )
-    ac = pvlib.pvsystem.snlinverter(v_dc=sd['v_mp'], i_dc=sd['i_mp'], **system.inverter_parameters).rename('ac_power')
+    ac = pvlib.pvsystem.snlinverter(
+        v_dc=sd['v_mp'],
+        i_dc=sd['i_mp'],
+        **system.inverter_parameters
+    ).rename('ac_power')
 
     hourly_kwh = ac / 1000
     daily_kwh = hourly_kwh.resample('D').sum()
@@ -117,20 +130,8 @@ tab1, tab2 = st.tabs(["Settings", "Results"])
 
 with tab1:
     st.subheader("Location & Orientation")
-    lat = st.number_input(
-        "Latitude",
-        min_value=-90.0,
-        max_value=90.0,
-        value=51.5074,
-        format="%.6f"
-    )
-    lon = st.number_input(
-        "Longitude",
-        min_value=-180.0,
-        max_value=180.0,
-        value=13.4050,
-        format="%.6f"
-    )
+    lat = st.number_input("Latitude", min_value=-90.0, max_value=90.0, value=51.5074, format="%.6f")
+    lon = st.number_input("Longitude", min_value=-180.0, max_value=180.0, value=13.4050, format="%.6f")
     tilt = st.slider("Tilt (°)", 0.0, 90.0, 30.0)
     azimuth = st.slider("Azimuth (°)", 0.0, 360.0, 180.0)
 
@@ -146,7 +147,9 @@ with tab2:
     else:
         with st.spinner("Fetching weather and computing forecast..."):
             weather = fetch_forecast(lat, lon, tz)
-            ac, hourly_kwh, daily_kwh = compute_pv_output(weather, lat, lon, tilt, azimuth, module_name, inverter_name)
+            ac, hourly_kwh, daily_kwh = compute_pv_output(
+                weather, lat, lon, tilt, azimuth, module_name, inverter_name
+            )
 
         st.subheader("Hourly AC Power (W)")
         st.line_chart(ac)
@@ -165,3 +168,4 @@ with tab2:
 
 st.markdown("---")
 st.markdown("Built with PVLib and Streamlit. Timezone fixed to CET (Europe/Berlin). Selected module and inverter above.")
+
