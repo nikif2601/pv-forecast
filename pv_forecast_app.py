@@ -100,24 +100,19 @@ with tab1:
     st.subheader("PV Module Selection")
     m_brand = st.selectbox("Module Brand", mod_brands)
     module_options = [k for k in module_keys if k.startswith(m_brand + '_')]
-        # Create labels: short name, year, STC power
+    # Create labels: short name, year, STC power
     module_labels = []
     label_to_module = {}
     for key in module_options:
-        # derive friendly name and year
         parts = key.split('___')
         name = parts[0]
-        raw_year = parts[1] if len(parts) > 1 else ''
-        year = raw_year.strip('_') or str(_modules[key].get('Year', 'N/A'))
+        year = parts[1] if len(parts) > 1 else 'N/A'
         params = _modules[key]
-        # module STC power: use STC if available else Impo*Vmpo
-        p_stc_w = params.get('STC', params.get('Impo', 0) * params.get('Vmpo', 0))
-        # format
+        p_stc_w = params.get('Impo', 0) * params.get('Vmpo', 0)
         label = f"{name} ({year}, {int(p_stc_w)} W)"
         module_labels.append(label)
         label_to_module[label] = key
     selected_module_label = st.selectbox("Module Type", module_labels)
-    module_key = label_to_module[selected_module_label]("Module Type", module_labels)
     module_key = label_to_module[selected_module_label]
 
     st.subheader("Inverter Selection")
