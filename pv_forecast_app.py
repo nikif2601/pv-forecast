@@ -7,17 +7,16 @@ import requests
 @st.cache_data(show_spinner=False)
 def fetch_forecast(lat, lon, tz):
     """
-    Fetches next-day hourly weather forecast from Open-Meteo.
-    Uses URL parameters via requests to ensure proper encoding (e.g., timezone with slash).
-    Expects an IANA timezone string (e.g., Europe/Berlin).
-    Returns a pandas DataFrame indexed by datetime with columns: ghi, dhi, dni, temperature_2m, wind_speed_10m.
+    Fetches next-day hourly weather forecast from Open-Meteo using UTC timezone,
+    then converts timestamps to the specified tz (IANA, e.g., Europe/Berlin).
+    Returns a pandas DataFrame indexed by localized datetime with columns: ghi, dhi, dni, temperature_2m, wind_speed_10m.
     """
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         'latitude': lat,
         'longitude': lon,
         'hourly': 'ghi,dhi,dni,temperature_2m,wind_speed_10m',
-        'timezone': tz,
+        'timezone': 'UTC',  # fetch in UTC
     }
     try:
         r = requests.get(url, params=params, timeout=10)
@@ -26,34 +25,34 @@ def fetch_forecast(lat, lon, tz):
         st.error(f"Failed to fetch weather data: {e}")
         return pd.DataFrame()
 
-    payload = r.json()
-    if 'hourly' not in payload or not payload['hourly']:
+    payload = r.json().get('hourly', {})
+    if not payload:
         st.error("No hourly data returned by weather API.")
         return pd.DataFrame()
 
-    data = payload['hourly']
-    df = pd.DataFrame(data)
+    df = pd.DataFrame(payload)
     df['time'] = pd.to_datetime(df['time'])
-    df = df.set_index('time')
+    # localize and convert to target timezone
+    df = df.set_index('time').tz_localize('UTC').tz_convert(tz)
 
-    # Filter to tomorrow's data
-    now = pd.Timestamp.now(tz)
-    tomorrow = (now + pd.Timedelta(days=1)).date().isoformat()
+    # Filter to tomorrow's local date
+    local_now = pd.Timestamp.now(tz)
+    tomorrow_str = (local_now + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
     try:
-        df = df.loc[tomorrow]
+        df = df.loc[tomorrow_str]
     except KeyError:
-        st.error(f"No data available for {tomorrow} in timezone {tz}.")
+        st.error(f"No data available for {tomorrow_str} in timezone {tz}.")
         return pd.DataFrame()
     return df
 
-# Cache module/inverter tables
-def get_modules_and_inverters():
-    """Load and cache module/inverter tables once."""
+# --- Load PVLib Tables ---
+@st.cache_data(show_spinner=False)
+def get_pv_tables():
     modules = pvlib.pvsystem.retrieve_sam('CECmod')
     inverters = pvlib.pvsystem.retrieve_sam('CECinverter')
     return modules, inverters
 
-_modules, _inverters = get_modules_and_inverters()
+_modules, _inverters = get_pv_tables()
 
 @st.cache_data(show_spinner=False)
 def compute_pv_output(weather, lat, lon, tilt, azimuth, module_name, inverter_name):
@@ -96,30 +95,42 @@ def compute_pv_output(weather, lat, lon, tilt, azimuth, module_name, inverter_na
     daily_kwh = hourly_kwh.resample('D').sum()
     return ac, hourly_kwh, daily_kwh
 
-# --- Streamlit App ---
-tz = "Europe/Berlin"  # Fixed to CET
+# --- Streamlit App Config ---
+tz = "Europe/Berlin"
 modules = list(_modules.keys())
 inverters = list(_inverters.keys())
 
-try:
-    default_module = modules.index('Canadian_Solar_CS5P_220M___2009_')
-except ValueError:
-    default_module = 0
-try:
-    default_inverter = inverters.index('ABB__MICRO_0_25_I_OUTD_US_208__208V_')
-except ValueError:
-    default_inverter = 0
+def get_default_index(lst, item):
+    try:
+        return lst.index(item)
+    except ValueError:
+        return 0
+
+default_module = get_default_index(modules, 'Canadian_Solar_CS5P_220M___2009_')
+default_inverter = get_default_index(inverters, 'ABB__MICRO_0_25_I_OUTD_US_208__208V_')
 
 st.set_page_config(page_title="Next-Day PV Forecast", layout="centered")
 st.title("🌞 Next-Day PV Production Forecast")
-st.markdown("All times in Central European Time (CET, Europe/Berlin). Enter system details and click **Run Forecast**.")
+st.markdown("All times in Central European Time (CET). Enter system details and click **Run Forecast**.")
 
 tab1, tab2 = st.tabs(["Settings", "Results"])
 
 with tab1:
     st.subheader("Location & Orientation")
-    lat = st.number_input("Latitude", 51.5074, format="%.6f")
-    lon = st.number_input("Longitude", 13.4050, format="%.6f")
+    lat = st.number_input(
+        "Latitude",
+        min_value=-90.0,
+        max_value=90.0,
+        value=51.5074,
+        format="%.6f"
+    )
+    lon = st.number_input(
+        "Longitude",
+        min_value=-180.0,
+        max_value=180.0,
+        value=13.4050,
+        format="%.6f"
+    )
     tilt = st.slider("Tilt (°)", 0.0, 90.0, 30.0)
     azimuth = st.slider("Azimuth (°)", 0.0, 360.0, 180.0)
 
@@ -150,7 +161,8 @@ with tab2:
         st.success(f"Total tomorrow (CET): {total:.2f} kWh")
 
         csv = hourly_kwh.to_frame().to_csv()
-        st.download_button("Download CSV", csv, file_name="hourly_kWh_forecast.csv")
+        st.download_button("Download CSV", data=csv, file_name="hourly_kWh_forecast.csv")
 
 st.markdown("---")
-st.markdown("Built with PVLib and Streamlit. Timezone fixed to CET.")
+st.markdown("Built with PVLib and Streamlit. Timezone fixed to CET (Europe/Berlin). Selected module and inverter above.")
+
