@@ -85,11 +85,14 @@ def compute_pv_output(weather, lat, lon, tilt, azimuth, module_name, inverter_na
     mc = ModelChain(system, location, aoi_model='no_loss')
     mc.run_model(mc_weather)
 
-    # Extract AC power series
-    ac = mc.ac.rename('ac_power')
+        # Extract AC power series
+    try:
+        ac = mc.results.ac.rename('ac_power')
+    except Exception:
+        ac = mc.ac.rename('ac_power')  # fallback for older versions
 
     # Convert to energy
-    hourly_kwh = ac / 1000  # W -> kW * 1h
+    hourly_kwh = ac / 1000  # W -> kW * 1h  # W -> kW * 1h
     daily_kwh = hourly_kwh.resample('D').sum()
     return ac, hourly_kwh, daily_kwh
 
@@ -154,6 +157,7 @@ with tab2:
 
 st.markdown("---")
 st.markdown("Built with PVLib and Streamlit. Timezone fixed to CET (Europe/Berlin). Selected module and inverter above.")
+
 
 
 
