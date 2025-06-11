@@ -100,14 +100,13 @@ with tab1:
     st.subheader("PV Module Selection")
     m_brand = st.selectbox("Module Brand", mod_brands)
     module_options = [k for k in module_keys if k.startswith(m_brand + '_')]
-    # Create labels: short name, year, STC power
+        # Create labels: short name, year, STC power
     module_labels = []
     label_to_module = {}
-        for key in module_options:
+    for key in module_options:
         # derive friendly name and year
         parts = key.split('___')
         name = parts[0]
-        # clean year from key or fallback to parameter
         raw_year = parts[1] if len(parts) > 1 else ''
         year = raw_year.strip('_') or str(_modules[key].get('Year', 'N/A'))
         params = _modules[key]
@@ -168,6 +167,7 @@ with tab2:
 
 st.markdown("---")
 st.markdown("Built with PVLib & Streamlit. Scaled by panels & inverters.")
+
 
 
 
