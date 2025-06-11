@@ -103,16 +103,22 @@ with tab1:
     # Create labels: short name, year, STC power
     module_labels = []
     label_to_module = {}
-    for key in module_options:
+        for key in module_options:
+        # derive friendly name and year
         parts = key.split('___')
         name = parts[0]
-        year = parts[1] if len(parts) > 1 else 'N/A'
+        # clean year from key or fallback to parameter
+        raw_year = parts[1] if len(parts) > 1 else ''
+        year = raw_year.strip('_') or str(_modules[key].get('Year', 'N/A'))
         params = _modules[key]
-        p_stc_w = params.get('Impo', 0) * params.get('Vmpo', 0)
+        # module STC power: use STC if available else Impo*Vmpo
+        p_stc_w = params.get('STC', params.get('Impo', 0) * params.get('Vmpo', 0))
+        # format
         label = f"{name} ({year}, {int(p_stc_w)} W)"
         module_labels.append(label)
         label_to_module[label] = key
     selected_module_label = st.selectbox("Module Type", module_labels)
+    module_key = label_to_module[selected_module_label]("Module Type", module_labels)
     module_key = label_to_module[selected_module_label]
 
     st.subheader("Inverter Selection")
@@ -162,6 +168,7 @@ with tab2:
 
 st.markdown("---")
 st.markdown("Built with PVLib & Streamlit. Scaled by panels & inverters.")
+
 
 
 
