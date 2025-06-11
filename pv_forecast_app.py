@@ -7,16 +7,16 @@ import requests
 @st.cache_data(show_spinner=False)
 def fetch_forecast(lat, lon, tz):
     """
-    Fetches next-day hourly weather forecast from Open-Meteo using UTC timezone,
-    then converts timestamps to the specified tz (IANA, e.g., Europe/Berlin).
-    Returns a pandas DataFrame indexed by localized datetime with columns: ghi, dhi, dni, temperature_2m, wind_speed_10m.
+    Fetches next-day hourly weather forecast from Open-Meteo (default UTC).
+    Converts timestamps to the specified tz (IANA, e.g., Europe/Berlin).
+    Returns local-time DataFrame with columns: ghi, dhi, dni, temperature_2m, wind_speed_10m.
     """
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         'latitude': lat,
         'longitude': lon,
-        'hourly': 'ghi,dhi,dni,temperature_2m,wind_speed_10m',
-        'timezone': 'UTC',  # fetch in UTC
+        'hourly': 'ghi,dhi,dni,temperature_2m,wind_speed_10m'
+        # omit timezone param to use default UTC
     }
     try:
         r = requests.get(url, params=params, timeout=10)
@@ -32,7 +32,7 @@ def fetch_forecast(lat, lon, tz):
 
     df = pd.DataFrame(payload)
     df['time'] = pd.to_datetime(df['time'])
-    # localize and convert to target timezone
+    # localize to UTC then convert to target timezone
     df = df.set_index('time').tz_localize('UTC').tz_convert(tz)
 
     # Filter to tomorrow's local date
@@ -165,4 +165,3 @@ with tab2:
 
 st.markdown("---")
 st.markdown("Built with PVLib and Streamlit. Timezone fixed to CET (Europe/Berlin). Selected module and inverter above.")
-
