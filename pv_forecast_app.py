@@ -81,8 +81,8 @@ def compute_pv_output(weather, lat, lon, tilt, azimuth, module_name, inverter_na
         temperature_model_parameters=pvlib.temperature.TEMPERATURE_MODEL_PARAMETERS['sapm']['open_rack_glass_glass']
     )
 
-    # ModelChain runs all models: solar position,  transposition, cell temp, dc/ad
-    mc = ModelChain(system, location)
+    # ModelChain with no AOI loss model to avoid inference errors
+    mc = ModelChain(system, location, aoi_model='no_loss')
     mc.run_model(mc_weather)
 
     # Extract AC power series
@@ -154,5 +154,6 @@ with tab2:
 
 st.markdown("---")
 st.markdown("Built with PVLib and Streamlit. Timezone fixed to CET (Europe/Berlin). Selected module and inverter above.")
+
 
 
